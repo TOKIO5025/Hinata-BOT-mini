@@ -1,121 +1,105 @@
+// ytmp3 (nombre o link) usando sylphy.xyz
+// Requiere Node 18+ (fetch global)
 
-import axios from 'axios'
-import crypto from 'crypto'
-
-async function savetube(url, format = '720') {
-  if (!/^https?:\/\//i.test(url)) throw 'URL tidak valid'
-
-  const id =
-    /youtu\.be\/([a-zA-Z0-9_-]{11})/.exec(url)?.[1] ||
-    /v=([a-zA-Z0-9_-]{11})/.exec(url)?.[1] ||
-    /\/shorts\/([a-zA-Z0-9_-]{11})/.exec(url)?.[1]
-
-  if (!id) throw 'Gagal mengambil ID YouTube'
-
-  const api = axios.create({
+async function ytSearchToUrl(query) {
+  // Busca en YouTube y agarra el primer videoId del HTML
+  const q = encodeURIComponent(query.trim())
+  const res = await fetch(`https://www.youtube.com/results?search_query=${q}`, {
     headers: {
-      'content-type': 'application/json',
-      origin: 'https://yt.savetube.me',
-      'user-agent':
-        'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/130.0 Mobile Safari/537.36'
+      // ayuda a que YouTube devuelva HTML normal
+      'user-agent': 'Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36 Chrome/120 Safari/537.36'
     }
   })
+  const html = await res.text()
 
-  const { data: cdnRes } = await api.get(
-    'https://media.savetube.vip/api/random-cdn'
-  )
-  const cdn = cdnRes.cdn
+  // primer videoId del resultado
+  const match = html.match(/"videoId":"([a-zA-Z0-9_-]{11})"/)
+  if (!match) return null
 
-  const { data: infoRes } = await api.post(`https://${cdn}/v2/info`, {
-    url: `https://www.youtube.com/watch?v=${id}`
-  })
-
-  const encrypted = Buffer.from(infoRes.data, 'base64')
-  const decipher = crypto.createDecipheriv(
-    'aes-128-cbc',
-    Buffer.from('C5D58EF67A7584E4A29F6C35BBC4EB12', 'hex'),
-    encrypted.slice(0, 16)
-  )
-
-  const decrypted = JSON.parse(
-    Buffer.concat([
-      decipher.update(encrypted.slice(16)),
-      decipher.final()
-    ]).toString()
-  )
-
-  const { data: dlRes } = await api.post(`https://${cdn}/download`, {
-    id,
-    downloadType: format === 'mp3' ? 'audio' : 'video',
-    quality: format === 'mp3' ? '128' : format,
-    key: decrypted.key
-  })
-
-  return {
-    title: decrypted.title,
-    duration: decrypted.duration,
-    thumbnail:
-      decrypted.thumbnail ||
-      `https://i.ytimg.com/vi/${id}/maxresdefault.jpg`,
-    type: format === 'mp3' ? 'audio' : 'video',
-    quality: format === 'mp3' ? '128' : format,
-    download: dlRes.data.downloadUrl
-  }
+  return `https://www.youtube.com/watch?v=${match[1]}`
 }
 
-let handler = async (m, { conn, args, usedPrefix, command }) => {
-  if (!args[0])
-    return m.reply(
-      `Gunakan:\n${usedPrefix + command} <url>\n\nContoh:\n${usedPrefix +
-        command} https://youtu.be/xxxx`
+let handler = async (m, { conn, text, usedPrefix, command }) => {
+  try {
+    if (!text) {
+      return conn.reply(
+        m.chat,
+        `◈━━━━━━━━━━━━━━━━◈
+│❒ Uso:
+│❒ ${usedPrefix + command} <nombre o link>
+│❒ Ejemplos:
+│❒ ${usedPrefix + command} hasta la piel
+│❒ ${usedPrefix + command} https://youtu.be/dQw4w9WgXcQ
+┗━━━━━━━━━━━━━━━┛`,
+        m
+      )
+    }
+
+    await conn.sendMessage(m.chat, { react: { text: '⌛', key: m.key } })
+
+    let input = text.trim()
+    let ytUrl = null
+
+    // Si es link, usarlo directo
+    if (/^https?:\/\/\S+/i.test(input)) {
+      ytUrl = input
+    } else {
+      // Si es nombre, buscar en YouTube
+      ytUrl = await ytSearchToUrl(input)
+      if (!ytUrl) throw 'No encontré resultados en YouTube con ese nombre.'
+    }
+
+    const apiKey = 'sylphy-toxSS2i'
+    const apiUrl = `https://sylphy.xyz/download/ytmp3?url=${encodeURIComponent(ytUrl)}&api_key=${encodeURIComponent(apiKey)}`
+
+    const res = await fetch(apiUrl)
+    const data = await res.json().catch(() => null)
+
+    if (!res.ok || !data) throw `API error (${res.status})`
+    if (data.status === false || data.success === false) throw (data.message || 'No se pudo convertir a mp3.')
+
+    const result = data.result || data.data || data
+
+    const dl =
+      result?.download ||
+      result?.download_url ||
+      result?.url ||
+      result?.link ||
+      result?.mp3 ||
+      result?.audio
+
+    const title = result?.title || result?.judul || result?.name || 'YTMP3'
+    const size = result?.size || result?.filesize || result?.file_size || null
+
+    if (!dl || typeof dl !== 'string') throw 'No encontré el link de descarga en la respuesta.'
+
+    await conn.sendMessage(
+      m.chat,
+      {
+        audio: { url: dl },
+        mimetype: 'audio/mpeg',
+        fileName: `${title}.mp3`
+      },
+      { quoted: m }
     )
 
-  const isMp3 = command === 'ytmp3'
-  const format = isMp3 ? 'mp3' : '720'
+    await conn.sendMessage(m.chat, { react: { text: '✅', key: m.key } })
 
-  await m.reply('⏳ Sedang memproses...')
-
-  try {
-    const res = await savetube(args[0], format)
-
-    const caption = `🎬 *${res.title}*
-⏱️ Durasi : ${Math.floor(res.duration / 60)}:${String(
-      res.duration % 60
-    ).padStart(2, '0')}
-📦 Type : ${res.type}
-🎞️ Quality : ${res.quality}`
-
-    if (res.type === 'audio') {
-      // MP3 AMAN
-      await conn.sendMessage(
-        m.chat,
-        {
-          audio: { url: res.download },
-          mimetype: 'audio/mpeg',
-          caption
-        },
-        { quoted: m }
-      )
-    } else {
-      await conn.sendMessage(
-        m.chat,
-        {
-          document: { url: res.download },
-          mimetype: 'video/mp4',
-          fileName: `${res.title}.mp4`,
-          caption
-        },
-        { quoted: m }
-      )
-    }
+    await conn.reply(
+      m.chat,
+      `🎵 *YTMP3 listo*
+📌 *Título:* ${title}${size ? `\n📦 *Tamaño:* ${size}` : ''}`,
+      m
+    )
   } catch (e) {
-    console.error(e)
-    m.reply('❌ Gagal mengunduh media')
+    console.error('ytmp3 error:', e)
+    await conn.sendMessage(m.chat, { react: { text: '❌', key: m.key } })
+    conn.reply(m.chat, `❌ Error: ${String(e?.message || e)}`, m)
   }
 }
 
-handler.help = ['ytmp3 <url>', 'ytmp4 <url>']
-handler.tags = ['downloader']
-handler.command = /^ytmp3|ytmp4$/i
+handler.help = ['ytmp3 <nombre|url>']
+handler.tags = ['download']
+handler.command = ['ytmp3', 'ytaudio', 'yta']
 
 export default handler

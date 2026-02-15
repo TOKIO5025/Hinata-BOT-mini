@@ -45,5 +45,5 @@ npm start
 
 | Rol         | Nombre        |
 |-------------|---------------|
-| Autor       | Brayan330   |
-| Colaborador | DuarteXV    |
+| Autor       | Neowa.x   |
+| Colaborador | Elmer    |

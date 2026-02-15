@@ -12,7 +12,7 @@ let handler = async (m, { conn }) => {
   const senderNumber = m.sender.split('@')[0];
 
   // 💥 Números con acceso exclusivo al comando
-  const permitidos = ['573142495895', '50248019799'];
+  const permitidos = ['50248019799', '584242773183', '5491162424280'];
 
   if (!permitidos.includes(senderNumber)) {
     return m.reply('🚫 *No tienes permiso para usar este comando.*');
